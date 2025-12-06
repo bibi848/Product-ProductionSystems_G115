@@ -261,12 +261,21 @@ def noisyDemandCurve(totalPeriod, surgePeriod, nominalPeriod, s, loc, scale, noi
     return totalCurve
 
 x = random.uniform(0, 0.02)
-totalCurve = noisyDemandCurve(totalPeriod=100, surgePeriod=90, nominalPeriod=90, s=0.5, loc=-2, scale=25, noiseLevel=0.015)
+totalCurve = noisyDemandCurve(totalPeriod=365, surgePeriod=90, nominalPeriod=90, s=0.5, loc=-2, scale=25, noiseLevel=0.015)
+
+plt.rcParams.update({
+    'font.size': 14,        
+    'axes.titlesize': 16,   
+    'axes.labelsize': 16,   
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 14,
+})
 
 plt.figure(figsize=(10,5))
 plt.plot(totalCurve, c='r', label='Syringe Demand')
 plt.xlabel('Time [Days]')
-plt.ylabel('Demand [syringes/day]')
+plt.ylabel('Demand [Syringes]')
 plt.axhline(y=nominalDemand, c='g', linestyle='--', label='Nominal Demand')
 plt.axhline(y=surgeDemand, c='b', linestyle='--', label='Surge Demand')
 plt.legend()
@@ -463,9 +472,9 @@ def run_simulation(batchThreshold = 0.2, timeFrame = 100, totalCurve=totalCurve)
 
 #%%
 # Simulating and Plotting Data
-timeFrame = 100
+timeFrame = 365
 iterNum   = int(timeFrame * 24 * 60)
-totCost, on_time_percent, data = run_simulation(batchThreshold = 0.2, timeFrame = timeFrame, totalCurve=totalCurve)
+totCost, on_time_percent, data = run_simulation(batchThreshold = 1.0, timeFrame = timeFrame, totalCurve=totalCurve)
 
 IM_buf, AA_buf, VI_buf, EO_buf, QU_buf, clockTime, releases_by_minute = data[0], data[1], data[2], data[3], data[4], data[5], data[6]
 
@@ -631,6 +640,18 @@ else:
 
 #%%
 # Plot cost vs batchThreshold
+
+plt.rcParams.update({
+    'font.size': 14,        
+    'axes.titlesize': 16,   
+    'axes.labelsize': 16,   
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 14,
+})
+
+plt.rcParams['legend.loc'] = 'lower left'
+
 plt.figure(figsize=(8,5))
 plt.plot(bt_vals, cost_median, 'o-', label='Median Cost')
 plt.fill_between(bt_vals, cost_q1, cost_q3, alpha=0.2, label='Interquartile Range')
@@ -672,71 +693,6 @@ plt.ylabel('On-Time Percentage [%]')
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
-plt.show()
-
-#%%
-# Producing CSV for Simio
-
-# 2025-01-01 00:00:00
-
-import pandas as pd
-
-demandCurves = []
-dailyThroughputs = []
-
-for i in range(100):
-
-    x = random.uniform(0, 0.02)
-    totalCurve = noisyDemandCurve(totalPeriod=100, surgePeriod=90, nominalPeriod=90, s=0.5, loc=-2, scale=25, noiseLevel=x)
-    demandCurves.append(totalCurve)
-
-    totCost, on_time_percent, data = run_simulation(batchThreshold = 0.5, timeFrame = 100, totalCurve=totalCurve)
-    IM_buf, AA_buf, VI_buf, EO_buf, QU_buf, clockTime, releases_by_minute = data[0], data[1], data[2], data[3], data[4], data[5], data[6]
-
-    clockTime_hours = np.array(clockTime) / 60
-    daily_throughput = []
-    day_times = []
-
-    minutes_per_day = 24 * 60
-    num_days = int(np.ceil(iterNum / minutes_per_day))
-
-    daily_throughput = []
-    day_times = []
-    for d in range(num_days):
-        s = d*minutes_per_day
-        e = min((d+1)*minutes_per_day, iterNum)
-        daily_throughput.append(releases_by_minute[s:e].sum())
-        day_times.append(d+1)
-    
-    dailyThroughputs.append(daily_throughput)
-
-demand_df = pd.DataFrame(np.array(demandCurves).T)
-throughput_df = pd.DataFrame(np.array(dailyThroughputs).T)
-demand_df.to_csv("demandCurves.csv", index=False)
-throughput_df.to_csv("dailyThroughputs.csv", index=False)
-
-#%%
-# Test if demand matches throughput
-
-# Load CSVs
-demand_df = pd.read_csv("demandCurves.csv")
-throughput_df = pd.read_csv("dailyThroughputs.csv")
-
-# Choose a simulation column index
-col = 4  # change this if needed
-
-# Extract data
-demand = demand_df.iloc[:, col]
-throughput = throughput_df.iloc[:, col]
-
-# Plot
-plt.figure()
-plt.plot(demand, label="Demand Curve")
-plt.plot(throughput, label="Daily Throughput")
-plt.xlabel("Day")
-plt.ylabel("Units")
-plt.legend()
-plt.title(f"Simulation {col}")
 plt.show()
 
 #%%
@@ -816,5 +772,3 @@ for i in range(1, n_simulations + 1):
 all_simulations_df = all_simulations_df[ordered_cols]
 output_filename = "sparse_minute_throughput.csv"
 all_simulations_df.to_csv(output_filename, index=False, date_format='%Y-%m-%d %H:%M:%S')
-
-print(f"\nSuccessfully created {output_filename} with {max_len} rows and minute resolution event data for {n_simulations} simulations.")

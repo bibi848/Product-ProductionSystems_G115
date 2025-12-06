@@ -4,8 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import lognorm
 import random
-import pandas as pd
-from datetime import datetime, timedelta
 
 def lognormalCurve(length, s=0.8, loc=0, scale=30, base=1, peak=2):
     t = np.arange(length)
@@ -263,7 +261,7 @@ def noisyDemandCurve(totalPeriod, surgePeriod, nominalPeriod, s, loc, scale, noi
     return totalCurve
 
 x = random.uniform(0, 0.02)
-totalCurve = noisyDemandCurve(totalPeriod=100, surgePeriod=90, nominalPeriod=90, s=0.5, loc=-2, scale=25, noiseLevel=0.015)
+totalCurve = noisyDemandCurve(totalPeriod=365, surgePeriod=90, nominalPeriod=90, s=0.5, loc=-2, scale=25, noiseLevel=0.015)
 
 plt.figure(figsize=(10,5))
 plt.plot(totalCurve, c='r', label='Syringe Demand')
@@ -277,7 +275,6 @@ plt.show()
 
 #%% 
 # Simulation Function
-peak_num = 0
 def run_simulation(batchThreshold = 0.2, timeFrame = 100, totalCurve=totalCurve):
     """
     Simulation logic where IM, AA and VI start at the same time each production period.
@@ -292,13 +289,16 @@ def run_simulation(batchThreshold = 0.2, timeFrame = 100, totalCurve=totalCurve)
     # IM-driven start-up delay is no longer used
     IM_buffer = AA_buffer = VI_buffer = EO_buffer = EO_out = QU_buffer = 0.0
     EO_timer = totCost = 0.0
+    EO_cost  = 0
+    tot_scrap_cost = 0
+    tot_storage_cost = 0
     demand = nominalDemand
     specialBatch = EO_batch
     releases_by_minute = np.zeros(iterNum)
     reserve_stock = 0.0
+    peak_num = 0
     next_batch_to_reserve = False
 
-    # logging lists
     IM_buf = []
     AA_buf = []
     VI_buf = []
@@ -310,8 +310,8 @@ def run_simulation(batchThreshold = 0.2, timeFrame = 100, totalCurve=totalCurve)
     quarantine_timers = []
 
     clock = 0
-    # Precompute bottleneck per-minute throughput (units/min) for use when throttling:
-    im_per_min = IM_pass_on_hourly_rate / 60.0             # units produced by IM per minute (available to downstream)
+    # Precompute bottleneck per-minute throughput
+    im_per_min = IM_pass_on_hourly_rate / 60.0             # units produced by IM per minute
     aa_capacity_per_min = AA_pass_on_hourly_rate / 60.0    # AA maximum capacity per minute
     vi_capacity_per_min = VI_total_kept_hourly_rate / 60.0 # VI maximum capacity per minute
 
@@ -356,43 +356,42 @@ def run_simulation(batchThreshold = 0.2, timeFrame = 100, totalCurve=totalCurve)
         # Determine which batch size we're producing in this running block
         producing_batch = EO_batch if (not peakAlarm and shift_of_day in (0,1)) or (peakAlarm and shift_of_day in (0,1)) else specialBatch
 
-        # Batch time determined entirely by IM throughput (IM bottleneck)
+        # Batch time determined entirely by IM throughput
         if producing_batch > 0:
             IM_ttb = determineTTB(producing_batch, IM_pass_on_hourly_rate) * 60.0
         else:
             IM_ttb = 0.0
 
-        # When not running schedule, nothing produces
         if run_schedule and cycle_pos < 450:
-            # Injection moulding produces at its pass-on rate (IM is slowest)
+            # Injection moulding
             if cycle_pos < IM_ttb:
                 IM_buffer += im_per_min
-                totCost   += IM_scrap_hourly_rate / 60.0  # scrap cost accrues as IM runs
+                totCost   += IM_scrap_hourly_rate / 60.0
+                tot_scrap_cost += IM_scrap_hourly_rate / 60.0
 
-            # AA is started at the same time as IM; it cannot exceed IM supply (throttled)
-            # AA will pull from IM_buffer up to aa_throttle_rate (which is typically = im_per_min)
+            # AA is started at the same time as IM
             if cycle_pos < IM_ttb:
                 moved_to_AA = min(aa_throttle_rate, IM_buffer)
                 IM_buffer -= moved_to_AA
                 AA_buffer += moved_to_AA
 
-            # VI pulls from AA_buffer at its throttled rate; assume VI performs inspection while IM is producing
+            # VI pulls from AA_buffer at its throttled rate
             if cycle_pos < IM_ttb:
                 moved_to_VI = min(vi_throttle_rate, AA_buffer)
                 AA_buffer -= moved_to_VI
                 VI_buffer += moved_to_VI
-                totCost += VI_total_cost_hourly_rate / 60.0  # inspection + rework costs accrue while VI active
+                totCost += VI_total_cost_hourly_rate / 60.0
+                tot_scrap_cost += VI_total_cost_hourly_rate / 60.0
 
-            # When IM has finished the batch (cycle_pos >= IM_ttb)
+            # When IM has finished the batch
             if cycle_pos >= IM_ttb and IM_ttb > 0 and EO_ready:
-                # move all inspected/kept parts to EO input buffer
                 EO_buffer += VI_buffer
                 VI_buffer = 0.0
                 AA_buffer = 0.0
                 IM_buffer = 0.0
                 EO_ready = False
 
-                # track whether this batch should be used to increase reserve stock later
+                # track whether this batch should be used to stock later
                 current_batch_to_reserve = next_batch_to_reserve
                 next_batch_to_reserve = False
 
@@ -401,13 +400,13 @@ def run_simulation(batchThreshold = 0.2, timeFrame = 100, totalCurve=totalCurve)
                 EO_timer += 1
 
             if EO_timer >= EO_time and not EO_ready:
-                # EO completes sterilisation for the held batch
                 sterilised_qty = EO_buffer
                 EO_out += sterilised_qty
                 EO_buffer = 0.0
                 EO_ready = True
                 EO_timer = 0.0
                 totCost += EO_batch_cost
+                EO_cost += EO_batch_cost
 
                 # quarantine handling
                 to_reserve = "current_batch_to_reserve" in locals() and current_batch_to_reserve
@@ -431,6 +430,7 @@ def run_simulation(batchThreshold = 0.2, timeFrame = 100, totalCurve=totalCurve)
 
         # Storage cost accrual
         totCost += reserve_stock * storageUnitPrice / 60.0
+        tot_storage_cost += reserve_stock * storageUnitPrice / 60.0
 
         # advance clock and log buffers
         clock += 1
@@ -455,13 +455,16 @@ def run_simulation(batchThreshold = 0.2, timeFrame = 100, totalCurve=totalCurve)
     total_output = sum(daily_throughput)
     total_demand = sum(totalCurve[:len(daily_throughput)])
     on_time_percent = 100.0 * total_output / total_demand if total_demand > 0 else 0.0
-    print(peak_num)
+
+    print(tot_scrap_cost)
+    print(tot_storage_cost)
+    print(EO_cost)
 
     return totCost, on_time_percent, data
 
 #%% 
 # Single-run simulation and plotting using the new IM-bottleneck simulation
-timeFrame = 100
+timeFrame = 365
 iterNum   = int(timeFrame * 24 * 60)
 totCost, on_time_percent, data = run_simulation(batchThreshold = 1.0, timeFrame = timeFrame, totalCurve=totalCurve)
 
@@ -471,6 +474,7 @@ clockTime_hours = np.array(clockTime) / 60.0
 minutes_per_day = 24 * 60
 num_days = int(np.ceil(iterNum / minutes_per_day))
 
+#%%
 daily_throughput = []
 day_times = []
 for d in range(num_days):
@@ -478,6 +482,15 @@ for d in range(num_days):
     e = min((d+1)*minutes_per_day, iterNum)
     daily_throughput.append(releases_by_minute[s:e].sum())
     day_times.append(d+1)
+
+plt.rcParams.update({
+    'font.size': 14,        
+    'axes.titlesize': 16,   
+    'axes.labelsize': 16,   
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 14,
+})   
 
 plt.figure()
 plt.plot(clockTime_hours, IM_buf)
@@ -526,7 +539,7 @@ plt.legend(loc='upper left', bbox_to_anchor=(1, 1))
 plt.tight_layout()
 plt.show()
 
-plt.figure(figsize=(10,5))
+plt.figure(figsize=(12,5))
 plt.plot(day_times, daily_throughput, label='Throughput')
 plt.plot(day_times, totalCurve[:len(day_times)], c='r', label='Demand')
 plt.xlabel('Time [Days]')
@@ -666,9 +679,13 @@ plt.tight_layout()
 plt.show()
 
 #%%
+import numpy as np
+import pandas as pd
+from datetime import datetime, timedelta
+import random
 
-timeFrame = 100 # Days
-iterNum = int(timeFrame * 24 * 60) 
+timeFrame = 100
+iterNum = int(timeFrame * 24 * 60)
 n_simulations = 100
 start_date_str = "2025-01-01 00:00:00"
 batch_threshold_for_csv = 1.0
@@ -678,8 +695,6 @@ time_index_full = np.array([start_datetime + timedelta(minutes=i) for i in range
 
 sim_data_list = []
 max_len = 0
-
-print("Generating sparse minute-resolution throughput data...")
 
 for i in range(n_simulations):
     noise = random.uniform(0, 0.02)
@@ -701,7 +716,6 @@ for i in range(n_simulations):
     releases_by_minute = data[6]
     
     non_zero_mask = releases_by_minute > 0
-    
     current_time_index = time_index_full[:len(releases_by_minute)]
     
     release_times = current_time_index[non_zero_mask]
@@ -710,19 +724,16 @@ for i in range(n_simulations):
     current_len = len(release_times)
     max_len = max(max_len, current_len)
     
+    # 5. Store the filtered data
     sim_data_list.append({
         'Time': release_times,
         'Throughput': release_amounts,
         'len': current_len,
         'sim_num': i + 1
     })
-    
-    print(f"Processed Simulation {i+1}/{n_simulations} (Events: {current_len})")
 
 final_columns = {}
 NULL_VALUE = ''
-
-print(f"\nMax event length found: {max_len}. Padding data...")
 
 for sim_data in sim_data_list:
     sim_num = sim_data['sim_num']

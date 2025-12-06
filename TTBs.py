@@ -250,6 +250,16 @@ AA_output[t > IM_ttb] = batch_size
 VI_output[t > VI_ends] = batch_size
 
 
+plt.rcParams.update({
+    'font.size': 14,        
+    'axes.titlesize': 16,   
+    'axes.labelsize': 16,   
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 14,
+})
+plt.rcParams['legend.loc'] = 'upper left'
+
 plt.figure(figsize=(8, 5))
 plt.plot(t, IM_output, label='Injection Moulding', linewidth=2)
 plt.plot(t, AA_output, label='Automated Assembly', linewidth=2)
@@ -265,3 +275,5 @@ plt.legend()
 plt.grid(True)
 plt.tight_layout()
 plt.show()
+
+#%%
